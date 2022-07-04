@@ -1,22 +1,72 @@
+use near_contract_standards::fungible_token::metadata::FungibleTokenMetadata;
 use near_sdk::{
     borsh::{self, BorshDeserialize, BorshSerialize},
-    env, log, near_bindgen, AccountId, PanicOnDefault,
+    collections::LazyOption,
+    env, ext_contract,
+    json_types::U128,
+    log, near_bindgen, AccountId, PanicOnDefault, PromiseOrValue,
 };
+
+#[ext_contract]
+pub trait ExtFungibleToken {
+    fn ft_metadata(&self) -> FungibleTokenMetadata;
+}
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct Contract {
     owner: AccountId,
+    token_a: (AccountId, FungibleTokenMetadata),
+    token_b: (AccountId, FungibleTokenMetadata),
+    liquidity_pool: LazyOption<LiquidityPool>,
 }
 
 #[near_bindgen]
 impl Contract {
     #[init]
-    pub fn new(owner: AccountId) -> Self {
+    pub fn new(owner: AccountId, token_a: AccountId, token_b: AccountId) -> PromiseOrValue<Self> {
         assert!(!env::state_exists(), "Already initialized");
-        log!("Contract initialized with {} as owner", owner);
-        Self { owner }
+        ext_fungible_token::ext(token_a.clone())
+            .ft_metadata()
+            .and(ext_fungible_token::ext(token_b.clone()).ft_metadata())
+            .then(Self::ext(env::current_account_id()).handle_new_callback(owner, token_a, token_b))
+            .into()
     }
+
+    pub fn get_contract_info(&self) -> Option<LiquidityPool> {
+        self.liquidity_pool.get()
+    }
+
+    #[private]
+    pub fn handle_new_callback(
+        owner: AccountId,
+        token_a: AccountId,
+        token_b: AccountId,
+        #[callback_unwrap] token_a_metadata: FungibleTokenMetadata,
+        #[callback_unwrap] token_b_metadata: FungibleTokenMetadata,
+    ) -> Self {
+        log!("Contract initialized with {} as owner", owner);
+        Self {
+            owner,
+            token_a: (token_a, token_a_metadata),
+            token_b: (token_b, token_b_metadata),
+            liquidity_pool: LazyOption::new(StorageKey::LiquidityPool.try_to_vec().unwrap(), None),
+        }
+    }
+}
+
+#[derive(BorshDeserialize, BorshSerialize)]
+pub struct LiquidityPool {
+    ticker: String,
+    ratio: U128,
+    decimals: u8,
+    token_a: U128,
+    token_b: U128,
+}
+
+#[derive(BorshSerialize)]
+enum StorageKey {
+    LiquidityPool,
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

@@ -1,16 +1,10 @@
-[package]
-name = "orderly-contract"
-version = "1.0.0"
-authors = ["Mario Reder <mario.reder@pm.me>"]
-edition = "2021"
+[workspace]
+members = [
+    "contract",
+]
+resolver = "2"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-[dependencies]
-near-sdk = "4"
-near-contract-standards = "4"
-
+[profile]
 [profile.release]
 codegen-units = 1
 opt-level = "z"

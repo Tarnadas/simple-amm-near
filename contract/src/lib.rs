@@ -1,6 +1,6 @@
 use near_contract_standards::fungible_token::metadata::FungibleTokenMetadata;
+use near_sdk::collections::LookupMap;
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::Promise;
 use near_sdk::{
     borsh::{self, BorshDeserialize, BorshSerialize},
     collections::LazyOption,
@@ -8,6 +8,7 @@ use near_sdk::{
     json_types::U128,
     log, near_bindgen, AccountId, PanicOnDefault,
 };
+use near_sdk::{Balance, Promise};
 
 #[ext_contract]
 pub trait ExtFungibleToken {
@@ -18,9 +19,17 @@ pub trait ExtFungibleToken {
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct OrderlyContract {
     owner: AccountId,
-    token_a: LazyOption<(AccountId, FungibleTokenMetadata)>,
-    token_b: LazyOption<(AccountId, FungibleTokenMetadata)>,
+    token_a: LazyOption<TokenPair>,
+    token_a_accounts: LookupMap<AccountId, Balance>,
+    token_b: LazyOption<TokenPair>,
+    token_b_accounts: LookupMap<AccountId, Balance>,
     liquidity_pool: LazyOption<LiquidityPool>,
+}
+
+#[derive(BorshDeserialize, BorshSerialize)]
+struct TokenPair {
+    pub account_id: AccountId,
+    pub metadata: FungibleTokenMetadata,
 }
 
 #[near_bindgen]
@@ -32,7 +41,9 @@ impl OrderlyContract {
         Self {
             owner,
             token_a: LazyOption::new(StorageKey::TokenA.try_to_vec().unwrap(), None),
+            token_a_accounts: LookupMap::new(StorageKey::TokenAAccounts.try_to_vec().unwrap()),
             token_b: LazyOption::new(StorageKey::TokenB.try_to_vec().unwrap(), None),
+            token_b_accounts: LookupMap::new(StorageKey::TokenBAccounts.try_to_vec().unwrap()),
             liquidity_pool: LazyOption::new(StorageKey::LiquidityPool.try_to_vec().unwrap(), None),
         }
     }
@@ -56,8 +67,14 @@ impl OrderlyContract {
     ) {
         let ticker = format!("{}-{}-LP", token_a, token_b);
         let decimals = token_a_metadata.decimals + token_b_metadata.decimals;
-        self.token_a.set(&(token_a, token_a_metadata));
-        self.token_b.set(&(token_b, token_b_metadata));
+        self.token_a.set(&TokenPair {
+            account_id: token_a,
+            metadata: token_a_metadata,
+        });
+        self.token_b.set(&TokenPair {
+            account_id: token_b,
+            metadata: token_b_metadata,
+        });
         self.liquidity_pool.set(&LiquidityPool {
             ticker,
             decimals,
@@ -65,6 +82,29 @@ impl OrderlyContract {
             token_b: U128::from(0),
         });
         log!("{:?}", self.liquidity_pool.get().unwrap());
+    }
+
+    pub fn deposit(&mut self, amount: U128) {
+        let (pair_a, pair_b, mut lp) = (
+            self.token_a.get().expect("Contract uninitialized"),
+            self.token_b.get().expect("Contract uninitialized"),
+            self.liquidity_pool.get().expect("Contract uninitialized"),
+        );
+        let signer = env::signer_account_id();
+
+        let (accounts, lp_token) = if env::predecessor_account_id() == pair_a.account_id {
+            (&mut self.token_a_accounts, &mut lp.token_a)
+        } else if env::predecessor_account_id() == pair_b.account_id {
+            (&mut self.token_b_accounts, &mut lp.token_b)
+        } else {
+            panic!("Deposited token address does not belong to liquidity pool");
+        };
+        lp_token.0.checked_add(amount.0).unwrap();
+        if signer != self.owner {
+            let mut signer_balance = accounts.get(&signer).unwrap_or_default();
+            signer_balance += amount.0;
+            accounts.insert(&signer, &signer_balance);
+        }
     }
 
     pub fn get_contract_info(&self) -> Option<LiquidityPool> {
@@ -85,6 +125,8 @@ pub struct LiquidityPool {
 enum StorageKey {
     TokenA,
     TokenB,
+    TokenAAccounts,
+    TokenBAccounts,
     LiquidityPool,
 }
 

@@ -86,7 +86,6 @@ impl OrderlyContract {
     }
 
     pub fn get_contract_info(&self) -> Option<LiquidityPool> {
-        log!("{:?}", self.liquidity_pool.get().unwrap());
         self.liquidity_pool.get()
     }
 }

@@ -13,7 +13,7 @@ async fn test_init() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn test_contract_info() -> anyhow::Result<()> {
+async fn test_get_contract_info() -> anyhow::Result<()> {
     let (worker, _, contract, token_a, token_b) = initialize_contracts().await?;
 
     contract_init(&worker, &contract, token_a.id(), token_b.id()).await?;
@@ -28,6 +28,16 @@ async fn test_contract_info() -> anyhow::Result<()> {
             token_b_supply: U128::from(0)
         }
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_get_contract_info_no_init() -> anyhow::Result<()> {
+    let (worker, _, contract, _, _) = initialize_contracts().await?;
+
+    let res = contract.call(&worker, "get_contract_info").view().await?;
+    assert_eq!(res.json::<Option<LiquidityPool>>()?, None);
 
     Ok(())
 }

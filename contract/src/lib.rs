@@ -1,4 +1,5 @@
 use near_contract_standards::fungible_token::metadata::FungibleTokenMetadata;
+use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 use near_sdk::collections::LookupMap;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{
@@ -8,7 +9,7 @@ use near_sdk::{
     json_types::U128,
     log, near_bindgen, AccountId, PanicOnDefault,
 };
-use near_sdk::{Balance, Promise};
+use near_sdk::{Balance, Promise, PromiseOrValue};
 
 #[ext_contract]
 pub trait ExtFungibleToken {
@@ -78,33 +79,10 @@ impl OrderlyContract {
         self.liquidity_pool.set(&LiquidityPool {
             ticker,
             decimals,
-            token_a: U128::from(0),
-            token_b: U128::from(0),
+            token_a_supply: U128::from(0),
+            token_b_supply: U128::from(0),
         });
         log!("{:?}", self.liquidity_pool.get().unwrap());
-    }
-
-    pub fn deposit(&mut self, amount: U128) {
-        let (pair_a, pair_b, mut lp) = (
-            self.token_a.get().expect("Contract uninitialized"),
-            self.token_b.get().expect("Contract uninitialized"),
-            self.liquidity_pool.get().expect("Contract uninitialized"),
-        );
-        let signer = env::signer_account_id();
-
-        let (accounts, lp_token) = if env::predecessor_account_id() == pair_a.account_id {
-            (&mut self.token_a_accounts, &mut lp.token_a)
-        } else if env::predecessor_account_id() == pair_b.account_id {
-            (&mut self.token_b_accounts, &mut lp.token_b)
-        } else {
-            panic!("Deposited token address does not belong to liquidity pool");
-        };
-        lp_token.0.checked_add(amount.0).unwrap();
-        if signer != self.owner {
-            let mut signer_balance = accounts.get(&signer).unwrap_or_default();
-            signer_balance += amount.0;
-            accounts.insert(&signer, &signer_balance);
-        }
     }
 
     pub fn get_contract_info(&self) -> Option<LiquidityPool> {
@@ -113,12 +91,44 @@ impl OrderlyContract {
     }
 }
 
+impl FungibleTokenReceiver for OrderlyContract {
+    fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        _msg: String,
+    ) -> PromiseOrValue<U128> {
+        log!("{} {}", &sender_id, &amount.0);
+        let (pair_a, pair_b, mut lp) = (
+            self.token_a.get().expect("Contract uninitialized"),
+            self.token_b.get().expect("Contract uninitialized"),
+            self.liquidity_pool.get().expect("Contract uninitialized"),
+        );
+
+        let (accounts, lp_token) = if env::predecessor_account_id() == pair_a.account_id {
+            (&mut self.token_a_accounts, &mut lp.token_a_supply)
+        } else if env::predecessor_account_id() == pair_b.account_id {
+            (&mut self.token_b_accounts, &mut lp.token_b_supply)
+        } else {
+            log!("Deposited token address does not belong to liquidity pool");
+            return PromiseOrValue::Value(amount);
+        };
+        lp_token.0.checked_add(amount.0).unwrap();
+        if sender_id != self.owner {
+            let mut signer_balance = accounts.get(&sender_id).unwrap_or_default();
+            signer_balance += amount.0;
+            accounts.insert(&sender_id, &signer_balance);
+        }
+        PromiseOrValue::Value(0.into())
+    }
+}
+
 #[derive(BorshDeserialize, BorshSerialize, Deserialize, Serialize, Eq, PartialEq, Debug)]
 pub struct LiquidityPool {
     pub ticker: String,
     pub decimals: u8,
-    pub token_a: U128,
-    pub token_b: U128,
+    pub token_a_supply: U128,
+    pub token_b_supply: U128,
 }
 
 #[derive(BorshSerialize)]

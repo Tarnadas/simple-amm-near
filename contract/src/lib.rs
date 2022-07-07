@@ -1,19 +1,20 @@
-use near_contract_standards::fungible_token::metadata::FungibleTokenMetadata;
-use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
-use near_sdk::collections::LookupMap;
-use near_sdk::serde::{Deserialize, Serialize};
+use near_contract_standards::fungible_token::{
+    metadata::FungibleTokenMetadata, receiver::FungibleTokenReceiver,
+};
 use near_sdk::{
     borsh::{self, BorshDeserialize, BorshSerialize},
     collections::LazyOption,
     env, ext_contract,
     json_types::U128,
-    log, near_bindgen, AccountId, PanicOnDefault,
+    log, near_bindgen,
+    serde::{Deserialize, Serialize},
+    AccountId, PanicOnDefault, Promise, PromiseOrValue,
 };
-use near_sdk::{Balance, Promise, PromiseOrValue};
 
 #[ext_contract]
 pub trait ExtFungibleToken {
     fn ft_metadata(&self) -> FungibleTokenMetadata;
+    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 }
 
 #[near_bindgen]
@@ -21,9 +22,7 @@ pub trait ExtFungibleToken {
 pub struct OrderlyContract {
     owner: AccountId,
     token_a: LazyOption<TokenPair>,
-    token_a_accounts: LookupMap<AccountId, Balance>,
     token_b: LazyOption<TokenPair>,
-    token_b_accounts: LookupMap<AccountId, Balance>,
 }
 
 #[derive(BorshDeserialize, BorshSerialize)]
@@ -42,9 +41,7 @@ impl OrderlyContract {
         Self {
             owner,
             token_a: LazyOption::new(StorageKey::TokenA.try_to_vec().unwrap(), None),
-            token_a_accounts: LookupMap::new(StorageKey::TokenAAccounts.try_to_vec().unwrap()),
             token_b: LazyOption::new(StorageKey::TokenB.try_to_vec().unwrap(), None),
-            token_b_accounts: LookupMap::new(StorageKey::TokenBAccounts.try_to_vec().unwrap()),
         }
     }
 
@@ -110,22 +107,52 @@ impl FungibleTokenReceiver for OrderlyContract {
             self.token_b.get().expect("Contract uninitialized"),
         );
 
-        let (accounts, pair, token) = if env::predecessor_account_id() == pair_a.account_id {
-            (&mut self.token_a_accounts, &mut pair_a, &mut self.token_a)
-        } else if env::predecessor_account_id() == pair_b.account_id {
-            (&mut self.token_b_accounts, &mut pair_b, &mut self.token_b)
-        } else {
-            log!("Deposited token address does not belong to liquidity pool");
-            return PromiseOrValue::Value(amount);
-        };
-        pair.supply.0 += amount.0;
-        token.set(pair);
+        let prod = pair_a.supply.0 * pair_b.supply.0;
+        let (in_pair, in_token, out_pair, out_token) =
+            if env::predecessor_account_id() == pair_a.account_id {
+                (
+                    &mut pair_a,
+                    &mut self.token_a,
+                    &mut pair_b,
+                    &mut self.token_b,
+                )
+            } else if env::predecessor_account_id() == pair_b.account_id {
+                (
+                    &mut pair_b,
+                    &mut self.token_b,
+                    &mut pair_a,
+                    &mut self.token_a,
+                )
+            } else {
+                log!("Deposited token address does not belong to liquidity pool");
+                return PromiseOrValue::Value(amount);
+            };
+        in_pair.supply.0 += amount.0;
+        in_token.set(in_pair);
         if sender_id != self.owner {
-            let mut signer_balance = accounts.get(&sender_id).unwrap_or_default();
-            signer_balance += amount.0;
-            accounts.insert(&sender_id, &signer_balance);
+            let out_pair_supply = out_pair.supply.0;
+            // this will truncate the remainder, thus resulting in a loss of lp token.
+            // in a real world solution, this would need to be addressed.
+            out_pair.supply.0 = prod / in_pair.supply.0;
+            let out_pair_diff = out_pair_supply - out_pair.supply.0;
+            log!(
+                "User {} swapping {} of token {} for {} of token {}",
+                &sender_id,
+                amount.0,
+                in_pair.account_id,
+                out_pair_diff,
+                out_pair.account_id
+            );
+            out_token.set(out_pair);
+
+            ext_fungible_token::ext(out_pair.account_id.clone())
+                .with_attached_deposit(1)
+                .with_static_gas(10_000_000_000_000.into())
+                .ft_transfer(sender_id, out_pair_diff.into(), Some("swap".to_string())); // .then(Self::ext(env::current_account_id()).handle_swap(token_a, token_b)),
+            PromiseOrValue::Value(0.into())
+        } else {
+            PromiseOrValue::Value(0.into())
         }
-        PromiseOrValue::Value(0.into())
     }
 }
 
@@ -147,8 +174,6 @@ pub struct ContractInfo {
 enum StorageKey {
     TokenA,
     TokenB,
-    TokenAAccounts,
-    TokenBAccounts,
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

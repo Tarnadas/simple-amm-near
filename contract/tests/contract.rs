@@ -138,6 +138,47 @@ async fn test_deposit_owner_no_init_should_refund() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_swap() -> anyhow::Result<()> {
+    let (worker, owner, contract, token_a, token_b) = initialize_contracts().await?;
+    let user = worker.dev_create_account().await?;
+
+    contract_init(&worker, &contract, token_a.id(), token_b.id()).await?;
+    storage_deposit(&worker, &token_a, contract.id()).await?;
+    mint_tokens(&worker, &token_a, owner.id(), 1_000_000).await?;
+    mint_tokens(&worker, &token_a, user.id(), 1_000_000).await?;
+    storage_deposit(&worker, &token_b, contract.id()).await?;
+    mint_tokens(&worker, &token_b, owner.id(), 1_000_000).await?;
+    mint_tokens(&worker, &token_b, user.id(), 1_000_000).await?;
+    transfer_tokens(&worker, &owner, contract.id(), token_a.id(), 1_000.into()).await?;
+    transfer_tokens(&worker, &owner, contract.id(), token_b.id(), 1_000.into()).await?;
+
+    transfer_tokens(&worker, &user, contract.id(), token_a.id(), 100.into()).await?;
+
+    let res = ft_balance_of(&worker, &token_a, user.id()).await?;
+    assert_eq!(res.json::<U128>()?, U128::from(999_900));
+    let res = ft_balance_of(&worker, &token_b, user.id()).await?;
+    assert_eq!(res.json::<U128>()?, U128::from(1_000_091));
+    let res = contract.call(&worker, "get_contract_info").view().await?;
+    assert_eq!(
+        res.json::<ContractInfo>()?,
+        ContractInfo {
+            token_a_id: token_a.id().to_string().parse().unwrap(),
+            token_a_name: "TokenA".to_string(),
+            token_a_symbol: "TKNA".to_string(),
+            token_a_supply: U128::from(1_100),
+            token_a_decimals: 12,
+            token_b_id: token_b.id().to_string().parse().unwrap(),
+            token_b_name: "TokenB".to_string(),
+            token_b_symbol: "TKNB".to_string(),
+            token_b_supply: U128::from(909),
+            token_b_decimals: 12
+        }
+    );
+
+    Ok(())
+}
+
 async fn initialize_contracts(
 ) -> anyhow::Result<(Worker<Sandbox>, Account, Contract, Contract, Contract)> {
     let worker = workspaces::sandbox().await?;

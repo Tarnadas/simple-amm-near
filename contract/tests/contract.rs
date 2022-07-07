@@ -1,7 +1,10 @@
 use near_sdk::json_types::U128;
-use orderly_contract::LiquidityPool;
+use orderly_contract::ContractInfo;
 use tokio::fs;
-use workspaces::{network::Sandbox, prelude::*, Account, AccountId, Contract, Worker};
+use workspaces::{
+    network::Sandbox, prelude::*, result::CallExecutionDetails, Account, AccountId, Contract,
+    Worker,
+};
 
 #[tokio::test]
 async fn test_init() -> anyhow::Result<()> {
@@ -20,12 +23,18 @@ async fn test_get_contract_info() -> anyhow::Result<()> {
 
     let res = contract.call(&worker, "get_contract_info").view().await?;
     assert_eq!(
-        res.json::<LiquidityPool>()?,
-        LiquidityPool {
-            ticker: format!("{}-{}-LP", token_a.id(), token_b.id()),
-            decimals: 24,
+        res.json::<ContractInfo>()?,
+        ContractInfo {
+            token_a_id: token_a.id().to_string().parse().unwrap(),
+            token_a_name: "TokenA".to_string(),
+            token_a_symbol: "TKNA".to_string(),
             token_a_supply: U128::from(0),
-            token_b_supply: U128::from(0)
+            token_a_decimals: 12,
+            token_b_id: token_b.id().to_string().parse().unwrap(),
+            token_b_name: "TokenB".to_string(),
+            token_b_symbol: "TKNB".to_string(),
+            token_b_supply: U128::from(0),
+            token_b_decimals: 12
         }
     );
 
@@ -37,7 +46,7 @@ async fn test_get_contract_info_no_init() -> anyhow::Result<()> {
     let (worker, _, contract, _, _) = initialize_contracts().await?;
 
     let res = contract.call(&worker, "get_contract_info").view().await?;
-    assert_eq!(res.json::<Option<LiquidityPool>>()?, None);
+    assert_eq!(res.json::<Option<ContractInfo>>()?, None);
 
     Ok(())
 }
@@ -50,19 +59,24 @@ async fn test_deposit_owner() -> anyhow::Result<()> {
     storage_deposit(&worker, &token_a, contract.id()).await?;
     mint_tokens(&worker, &token_a, owner.id(), 1_000_000).await?;
 
-    let res = owner
-        .call(&worker, token_a.id(), "ft_transfer_call")
-        .args_json((
-            contract.id(),
-            U128::from(1),
-            Option::<String>::None,
-            "".to_string(),
-        ))?
-        .max_gas()
-        .deposit(1)
-        .transact()
-        .await?;
-    assert!(res.is_success());
+    transfer_tokens(&worker, &owner, contract.id(), token_a.id(), 1_000.into()).await?;
+
+    let res = contract.call(&worker, "get_contract_info").view().await?;
+    assert_eq!(
+        res.json::<ContractInfo>()?,
+        ContractInfo {
+            token_a_id: token_a.id().to_string().parse().unwrap(),
+            token_a_name: "TokenA".to_string(),
+            token_a_symbol: "TKNA".to_string(),
+            token_a_supply: U128::from(1_000),
+            token_a_decimals: 12,
+            token_b_id: token_b.id().to_string().parse().unwrap(),
+            token_b_name: "TokenB".to_string(),
+            token_b_symbol: "TKNB".to_string(),
+            token_b_supply: U128::from(0),
+            token_b_decimals: 12
+        }
+    );
 
     Ok(())
 }
@@ -86,12 +100,20 @@ async fn initialize_contracts(
     let token_a_contract = worker
         .dev_deploy(&fs::read("../res/test_token.wasm").await?)
         .await?;
-    token_a_contract.call(&worker, "new").transact().await?;
+    token_a_contract
+        .call(&worker, "new")
+        .args_json(("TokenA", "TKNA"))?
+        .transact()
+        .await?;
 
     let token_b_contract = worker
         .dev_deploy(&fs::read("../res/test_token.wasm").await?)
         .await?;
-    token_b_contract.call(&worker, "new").transact().await?;
+    token_b_contract
+        .call(&worker, "new")
+        .args_json(("TokenB", "TKNB"))?
+        .transact()
+        .await?;
 
     Ok((worker, owner, contract, token_a_contract, token_b_contract))
 }
@@ -140,4 +162,22 @@ async fn mint_tokens(
         .await?;
     assert!(res.is_success());
     Ok(())
+}
+
+async fn transfer_tokens(
+    worker: &Worker<Sandbox>,
+    sender: &Account,
+    receiver: &AccountId,
+    token: &AccountId,
+    amount: U128,
+) -> anyhow::Result<CallExecutionDetails> {
+    let res = sender
+        .call(worker, token, "ft_transfer_call")
+        .args_json((receiver, amount, Option::<String>::None, "".to_string()))?
+        .max_gas()
+        .deposit(1)
+        .transact()
+        .await?;
+    assert!(res.is_success());
+    Ok(res)
 }

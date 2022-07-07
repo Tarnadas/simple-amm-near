@@ -9,14 +9,18 @@ use near_sdk::{near_bindgen, AccountId, PanicOnDefault, PromiseOrValue};
 #[near_bindgen]
 #[derive(BorshSerialize, BorshDeserialize, PanicOnDefault)]
 pub struct Contract {
+    name: String,
+    symbol: String,
     token: FungibleToken,
 }
 
 #[near_bindgen]
 impl Contract {
     #[init]
-    pub fn new() -> Self {
+    pub fn new(name: String, symbol: String) -> Self {
         Self {
+            name,
+            symbol,
             token: FungibleToken::new(b"t".to_vec()),
         }
     }
@@ -39,8 +43,8 @@ impl FungibleTokenMetadataProvider for Contract {
     fn ft_metadata(&self) -> FungibleTokenMetadata {
         FungibleTokenMetadata {
             spec: "ft-1.0.0".to_string(),
-            name: "token".to_string(),
-            symbol: "A".to_string(),
+            name: self.name.clone(),
+            symbol: self.symbol.clone(),
             icon: None,
             reference: None,
             reference_hash: None,
@@ -60,7 +64,7 @@ mod tests {
     fn test_basics() {
         let mut context = VMContextBuilder::new();
         testing_env!(context.build());
-        let mut contract = Contract::new();
+        let mut contract = Contract::new("token".to_string(), "TKN".to_string());
         testing_env!(context
             .attached_deposit(125 * env::storage_byte_cost())
             .build());

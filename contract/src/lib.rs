@@ -108,6 +108,10 @@ impl FungibleTokenReceiver for OrderlyContract {
         );
 
         let prod = pair_a.supply.0 * pair_b.supply.0;
+        if prod == 0 && sender_id != self.owner {
+            log!("Not enough liquidity available for swap");
+            return PromiseOrValue::Value(amount);
+        }
         let (in_pair, in_token, out_pair, out_token) =
             if env::predecessor_account_id() == pair_a.account_id {
                 (

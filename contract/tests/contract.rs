@@ -23,22 +23,15 @@ async fn test_get_contract_info() -> anyhow::Result<()> {
 
     contract_init(&worker, &contract, token_a.id(), token_b.id()).await?;
 
-    let res = contract.call(&worker, "get_contract_info").view().await?;
-    assert_eq!(
-        res.json::<ContractInfo>()?,
-        ContractInfo {
-            token_a_id: token_a.id().to_string().parse().unwrap(),
-            token_a_name: "TokenA".to_string(),
-            token_a_symbol: "TKNA".to_string(),
-            token_a_supply: U128::from(0),
-            token_a_decimals: 12,
-            token_b_id: token_b.id().to_string().parse().unwrap(),
-            token_b_name: "TokenB".to_string(),
-            token_b_symbol: "TKNB".to_string(),
-            token_b_supply: U128::from(0),
-            token_b_decimals: 12
-        }
-    );
+    assert_token_supplies(
+        &worker,
+        &contract,
+        token_a.id(),
+        0.into(),
+        token_b.id(),
+        0.into(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -65,22 +58,15 @@ async fn test_deposit_owner() -> anyhow::Result<()> {
 
     let res = ft_balance_of(&worker, &token_a, owner.id()).await?;
     assert_eq!(res.json::<U128>()?, U128::from(999_000));
-    let res = contract.call(&worker, "get_contract_info").view().await?;
-    assert_eq!(
-        res.json::<ContractInfo>()?,
-        ContractInfo {
-            token_a_id: token_a.id().to_string().parse().unwrap(),
-            token_a_name: "TokenA".to_string(),
-            token_a_symbol: "TKNA".to_string(),
-            token_a_supply: U128::from(1_000),
-            token_a_decimals: 12,
-            token_b_id: token_b.id().to_string().parse().unwrap(),
-            token_b_name: "TokenB".to_string(),
-            token_b_symbol: "TKNB".to_string(),
-            token_b_supply: U128::from(0),
-            token_b_decimals: 12
-        }
-    );
+    assert_token_supplies(
+        &worker,
+        &contract,
+        token_a.id(),
+        1_000.into(),
+        token_b.id(),
+        0.into(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -103,22 +89,15 @@ async fn test_deposit_owner_2() -> anyhow::Result<()> {
     assert_eq!(res.json::<U128>()?, U128::from(999_000));
     let res = ft_balance_of(&worker, &token_b, owner.id()).await?;
     assert_eq!(res.json::<U128>()?, U128::from(1_000_000 - 69_000 - 42));
-    let res = contract.call(&worker, "get_contract_info").view().await?;
-    assert_eq!(
-        res.json::<ContractInfo>()?,
-        ContractInfo {
-            token_a_id: token_a.id().to_string().parse().unwrap(),
-            token_a_name: "TokenA".to_string(),
-            token_a_symbol: "TKNA".to_string(),
-            token_a_supply: U128::from(1_000),
-            token_a_decimals: 12,
-            token_b_id: token_b.id().to_string().parse().unwrap(),
-            token_b_name: "TokenB".to_string(),
-            token_b_symbol: "TKNB".to_string(),
-            token_b_supply: U128::from(69_042),
-            token_b_decimals: 12
-        }
-    );
+    assert_token_supplies(
+        &worker,
+        &contract,
+        token_a.id(),
+        1_000.into(),
+        token_b.id(),
+        69_042.into(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -159,22 +138,125 @@ async fn test_swap() -> anyhow::Result<()> {
     assert_eq!(res.json::<U128>()?, U128::from(999_900));
     let res = ft_balance_of(&worker, &token_b, user.id()).await?;
     assert_eq!(res.json::<U128>()?, U128::from(1_000_091));
-    let res = contract.call(&worker, "get_contract_info").view().await?;
-    assert_eq!(
-        res.json::<ContractInfo>()?,
-        ContractInfo {
-            token_a_id: token_a.id().to_string().parse().unwrap(),
-            token_a_name: "TokenA".to_string(),
-            token_a_symbol: "TKNA".to_string(),
-            token_a_supply: U128::from(1_100),
-            token_a_decimals: 12,
-            token_b_id: token_b.id().to_string().parse().unwrap(),
-            token_b_name: "TokenB".to_string(),
-            token_b_symbol: "TKNB".to_string(),
-            token_b_supply: U128::from(909),
-            token_b_decimals: 12
-        }
-    );
+    assert_token_supplies(
+        &worker,
+        &contract,
+        token_a.id(),
+        1_100.into(),
+        token_b.id(),
+        909.into(),
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_swap_2() -> anyhow::Result<()> {
+    let (worker, owner, contract, token_a, token_b) = initialize_contracts().await?;
+    let user = worker.dev_create_account().await?;
+
+    contract_init(&worker, &contract, token_a.id(), token_b.id()).await?;
+    storage_deposit(&worker, &token_a, contract.id()).await?;
+    mint_tokens(&worker, &token_a, owner.id(), 1_000_000).await?;
+    mint_tokens(&worker, &token_a, user.id(), 1_000_000).await?;
+    storage_deposit(&worker, &token_b, contract.id()).await?;
+    mint_tokens(&worker, &token_b, owner.id(), 1_000_000).await?;
+    mint_tokens(&worker, &token_b, user.id(), 1_000_000).await?;
+    transfer_tokens(&worker, &owner, contract.id(), token_a.id(), 1_000.into()).await?;
+    transfer_tokens(&worker, &owner, contract.id(), token_b.id(), 1_000.into()).await?;
+
+    transfer_tokens(&worker, &user, contract.id(), token_a.id(), 50.into()).await?;
+    transfer_tokens(&worker, &user, contract.id(), token_b.id(), 150.into()).await?;
+    transfer_tokens(&worker, &user, contract.id(), token_a.id(), 200.into()).await?;
+
+    let res = ft_balance_of(&worker, &token_a, user.id()).await?;
+    assert_eq!(res.json::<U128>()?, U128::from(999_893));
+    let res = ft_balance_of(&worker, &token_b, user.id()).await?;
+    assert_eq!(res.json::<U128>()?, U128::from(1_000_098));
+    assert_token_supplies(
+        &worker,
+        &contract,
+        token_a.id(),
+        1_107.into(),
+        token_b.id(),
+        902.into(),
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_swap_all() -> anyhow::Result<()> {
+    let (worker, owner, contract, token_a, token_b) = initialize_contracts().await?;
+    let user = worker.dev_create_account().await?;
+
+    contract_init(&worker, &contract, token_a.id(), token_b.id()).await?;
+    storage_deposit(&worker, &token_a, contract.id()).await?;
+    mint_tokens(&worker, &token_a, owner.id(), 1_000_000).await?;
+    mint_tokens(&worker, &token_a, user.id(), 1_000_000).await?;
+    storage_deposit(&worker, &token_b, contract.id()).await?;
+    mint_tokens(&worker, &token_b, owner.id(), 1_000_000).await?;
+    mint_tokens(&worker, &token_b, user.id(), 1_000_000).await?;
+    transfer_tokens(&worker, &owner, contract.id(), token_a.id(), 1_000.into()).await?;
+    transfer_tokens(&worker, &owner, contract.id(), token_b.id(), 1_000.into()).await?;
+
+    transfer_tokens(
+        &worker,
+        &user,
+        contract.id(),
+        token_a.id(),
+        1_000_000.into(),
+    )
+    .await?;
+
+    let res = ft_balance_of(&worker, &token_a, user.id()).await?;
+    assert_eq!(res.json::<U128>()?, U128::from(0));
+    let res = ft_balance_of(&worker, &token_b, user.id()).await?;
+    assert_eq!(res.json::<U128>()?, U128::from(1_001_000));
+    assert_token_supplies(
+        &worker,
+        &contract,
+        token_a.id(),
+        1_001_000.into(),
+        token_b.id(),
+        0.into(),
+    )
+    .await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_swap_not_enough_liquidity() -> anyhow::Result<()> {
+    let (worker, owner, contract, token_a, token_b) = initialize_contracts().await?;
+    let user = worker.dev_create_account().await?;
+
+    contract_init(&worker, &contract, token_a.id(), token_b.id()).await?;
+    storage_deposit(&worker, &token_a, contract.id()).await?;
+    mint_tokens(&worker, &token_a, owner.id(), 1_000_000).await?;
+    mint_tokens(&worker, &token_a, user.id(), 1_000_000).await?;
+    storage_deposit(&worker, &token_b, contract.id()).await?;
+    mint_tokens(&worker, &token_b, owner.id(), 1_000_000).await?;
+    mint_tokens(&worker, &token_b, user.id(), 1_000_000).await?;
+    transfer_tokens(&worker, &owner, contract.id(), token_a.id(), 1_000.into()).await?;
+
+    transfer_tokens(&worker, &user, contract.id(), token_a.id(), 10.into()).await?;
+
+    let res = ft_balance_of(&worker, &token_a, user.id()).await?;
+    assert_eq!(res.json::<U128>()?, U128::from(1_000_000));
+    let res = ft_balance_of(&worker, &token_b, user.id()).await?;
+    assert_eq!(res.json::<U128>()?, U128::from(1_000_000));
+    assert_token_supplies(
+        &worker,
+        &contract,
+        token_a.id(),
+        1_000.into(),
+        token_b.id(),
+        0.into(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -291,4 +373,31 @@ async fn ft_balance_of(
         .view()
         .await?;
     Ok(res)
+}
+
+async fn assert_token_supplies(
+    worker: &Worker<Sandbox>,
+    contract: &Contract,
+    token_a: &AccountId,
+    token_a_supply: U128,
+    token_b: &AccountId,
+    token_b_supply: U128,
+) -> anyhow::Result<()> {
+    let res = contract.call(worker, "get_contract_info").view().await?;
+    assert_eq!(
+        res.json::<ContractInfo>()?,
+        ContractInfo {
+            token_a_id: token_a.to_string().parse().unwrap(),
+            token_a_name: "TokenA".to_string(),
+            token_a_symbol: "TKNA".to_string(),
+            token_a_supply,
+            token_a_decimals: 12,
+            token_b_id: token_b.to_string().parse().unwrap(),
+            token_b_name: "TokenB".to_string(),
+            token_b_symbol: "TKNB".to_string(),
+            token_b_supply,
+            token_b_decimals: 12
+        }
+    );
+    Ok(())
 }

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "contract",
+    "test-token"
 ]
 resolver = "2"
 

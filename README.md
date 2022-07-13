@@ -2,7 +2,7 @@
 
 This is a simple Automated Market Maker (AMM) Smart Contract that supports swapping two tokens.
 The owner of the Smart Contract can add liquidity via sending the appropriate token.
-All other users can then swap via 
+All other users can then swap via sending one of the respective token.
 
 ## Building
 
